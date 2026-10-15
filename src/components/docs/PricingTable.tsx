@@ -48,22 +48,6 @@ const PLANS: Plan[] = [
     ],
   },
   {
-    name: "Business",
-    blurb: "Several teams, more agents, tighter control.",
-    monthly: 199,
-    cta: "Start Business",
-    href: "/signup",
-    items: [
-      { t: "5 workspaces, up to 100 people" },
-      { t: "100,000 messages read per month" },
-      { t: "Everything in Team" },
-      { t: "Unlimited audit history + export" },
-      { t: "Approval policies per workspace" },
-      { t: "Priority support" },
-      { t: "SSO (SAML)" },
-    ],
-  },
-  {
     name: "Enterprise",
     blurb: "Your cloud, your rules, our help.",
     monthly: null,
