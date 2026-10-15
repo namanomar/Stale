@@ -67,10 +67,10 @@ export async function ingestDocument(org: Org, mem: Memory, doc: IngestDoc): Pro
   const empty = (status: IngestResult["status"]): IngestResult => ({
     status, engine: "rules", claims: 0, added: [], confirmed: [], updated: [], queued: [],
   });
-  if (ingestSeen(org.id, doc.kind, doc.externalId)) return empty("duplicate");
-  if (doc.integrationId) touchIntegration(doc.integrationId);
+  if (await ingestSeen(org.id, doc.kind, doc.externalId)) return empty("duplicate");
+  if (doc.integrationId) await touchIntegration(doc.integrationId);
   if (!doc.text.trim() && !doc.images?.length) {
-    ingestRecord(org.id, doc.kind, doc.externalId, "empty", "no text");
+    await ingestRecord(org.id, doc.kind, doc.externalId, "empty", "no text");
     return empty("empty");
   }
 
@@ -118,7 +118,7 @@ export async function ingestDocument(org: Org, mem: Memory, doc: IngestDoc): Pro
           risk: sourceUntrusted ? "untrusted-source" : claim.confidence < MIN_AUTO_CONFIDENCE ? "low-confidence" : "policy",
           evidence: ev,
         };
-        const item = createReview(org.id, payload);
+        const item = await createReview(org.id, payload);
         result.queued.push({ reviewId: item.id, statement: claim.statement, reason: describeRisk(payload.risk) });
         continue;
       }
@@ -151,7 +151,7 @@ export async function ingestDocument(org: Org, mem: Memory, doc: IngestDoc): Pro
           targetId: top.n.id, targetContent: top.n.content, reason: "Conflicts with something your team already knows",
           risk, evidence: ev,
         };
-        const item = createReview(org.id, payload);
+        const item = await createReview(org.id, payload);
         result.queued.push({ reviewId: item.id, statement: claim.statement, reason: describeRisk(risk) });
         continue;
       }
@@ -163,7 +163,7 @@ export async function ingestDocument(org: Org, mem: Memory, doc: IngestDoc): Pro
         op: "add", statement: claim.statement, claimKind: claim.kind, confidence: claim.confidence,
         sourceId, sourceName: doc.sourceName, untrusted: false, reason: rel.reason, risk: "policy", evidence: ev,
       };
-      const item = createReview(org.id, payload);
+      const item = await createReview(org.id, payload);
       result.queued.push({ reviewId: item.id, statement: claim.statement, reason: describeRisk("policy") });
       continue;
     }
@@ -171,7 +171,7 @@ export async function ingestDocument(org: Org, mem: Memory, doc: IngestDoc): Pro
     result.added.push({ id: node.id, statement: claim.statement, tainted: sourceUntrusted });
   }
 
-  ingestRecord(
+  await ingestRecord(
     org.id, doc.kind, doc.externalId, "processed",
     `${result.added.length} new · ${result.updated.length} updated · ${result.confirmed.length} confirmed · ${result.queued.length} for review`,
   );
@@ -214,6 +214,6 @@ export async function decideReviewItem(
       outcome = { impacted: 0, actionsAtRisk: 0, nodeId: node.id };
     }
   }
-  decideReview(org.id, item.id, decision, by);
+  await decideReview(org.id, item.id, decision, by);
   return outcome;
 }

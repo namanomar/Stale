@@ -11,7 +11,7 @@ import { findIntegration, getOrg, updateIntegrationConfig } from "@/lib/system";
  */
 export const POST = plain(async (req, { id }) => {
   const raw = await req.text();
-  const integ = findIntegration(id);
+  const integ = await findIntegration(id);
   if (!integ || integ.type !== "slack") throw new StaleError(404, "Unknown connection");
   const cfg = integ.config as SlackConfig;
   if (
@@ -33,11 +33,11 @@ export const POST = plain(async (req, { id }) => {
   if (payload.type === "url_verification") return Response.json({ challenge: payload.challenge });
   if (payload.type !== "event_callback") return { ok: true };
 
-  const org = getOrg(integ.org_id);
+  const org = await getOrg(integ.org_id);
   const doc = await slackEventToDoc(cfg, integ.id, payload);
   if (!doc) return { ok: true, ignored: true };
   // Slack retries slow responses; the ingest ledger makes a retry a no-op.
   const result = await ingestDocument(org, await Memory.open(org.id), doc);
-  if (cfg.names) updateIntegrationConfig(org.id, integ.id, { names: cfg.names });
+  if (cfg.names) await updateIntegrationConfig(org.id, integ.id, { names: cfg.names });
   return { ok: true, status: result.status };
 });

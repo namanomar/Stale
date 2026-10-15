@@ -5,5 +5,5 @@ import { resolveSession, type Principal } from "./system";
 /** The signed-in principal for server components, or null. */
 export async function getPrincipal(): Promise<Principal | null> {
   const jar = await cookies();
-  return resolveSession(jar.get(SESSION_COOKIE)?.value);
+  return await resolveSession(jar.get(SESSION_COOKIE)?.value);
 }

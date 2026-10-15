@@ -33,4 +33,4 @@ export const POST = route(async ({ principal, mem, body }) => {
   });
 });
 
-export const GET = route(async ({ principal }) => ingestRecent(principal.org.id));
+export const GET = route(async ({ principal }) => await ingestRecent(principal.org.id));

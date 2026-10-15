@@ -11,7 +11,7 @@ const input = z.object({
 
 export const POST = plain(async (req) => {
   const body = await jsonBody(req, input);
-  const { user, org } = createAccount(body);
-  const { token, maxAge } = createSession(user.id, org.id);
+  const { user, org } = await createAccount(body);
+  const { token, maxAge } = await createSession(user.id, org.id);
   return Response.json({ user, org }, { status: 201, headers: { "set-cookie": sessionCookie(token, maxAge) } });
 });

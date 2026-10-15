@@ -5,6 +5,6 @@ if (!email || !password) {
   console.error("usage: tsx scripts/reset-password.ts <email> <new-password>");
   process.exit(1);
 }
-resetPassword(email, password);
-console.log("verified:", verifyLogin(email, password).email);
+await resetPassword(email, password);
+console.log("verified:", (await verifyLogin(email, password)).email);
 closeSys();

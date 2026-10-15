@@ -16,15 +16,15 @@ export const POST = plain(async (req) => {
   if (a && a.reset > Date.now() && a.n >= 8) throw new StaleError(429, "Too many attempts. Try again in a few minutes.");
   let user;
   try {
-    user = verifyLogin(email, password);
+    user = await verifyLogin(email, password);
   } catch (e) {
     const cur = a && a.reset > Date.now() ? a : { n: 0, reset: Date.now() + 10 * 60_000 };
     attempts.set(key, { n: cur.n + 1, reset: cur.reset });
     throw e;
   }
   attempts.delete(key);
-  const orgs = orgsOf(user.id);
+  const orgs = await orgsOf(user.id);
   if (!orgs.length) throw new StaleError(403, "This account has no workspace");
-  const { token, maxAge } = createSession(user.id, orgs[0].id);
+  const { token, maxAge } = await createSession(user.id, orgs[0].id);
   return Response.json({ user, org: orgs[0] }, { headers: { "set-cookie": sessionCookie(token, maxAge) } });
 });

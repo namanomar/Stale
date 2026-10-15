@@ -1,20 +1,17 @@
 /**
  * Control-plane store: accounts, workspaces, sessions, API keys, integrations, the review queue
  * and the ingest ledger. The *memory* (facts, beliefs, provenance) lives in FalkorDB, one graph
- * per workspace; everything about who may touch it lives here.
- *
- * Uses Node's built-in SQLite (no native dependency). Loaded via process.getBuiltinModule so the
- * bundler never tries to resolve it.
+ * per workspace; everything about who may touch it lives here. Backed by libSQL (Turso or a local file).
  */
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { createClient, type Client } from "@libsql/client";
 import { dirname } from "node:path";
 import { badRequest, conflict, notFound, StaleError } from "./errors";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Db = import("node:sqlite").DatabaseSync;
 
-const g = globalThis as unknown as { __staleSys?: Db };
+const g = globalThis as unknown as { __staleSys?: Promise<Client> };
 
 export type Role = "viewer" | "member" | "admin";
 export const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, admin: 2 };
@@ -35,15 +32,21 @@ export interface OrgSettings {
 }
 const DEFAULT_SETTINGS: OrgSettings = { autoApply: "trusted" };
 
-export function sys(): Db {
-  if (g.__staleSys) return g.__staleSys;
-  const sqlite = (process as any).getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
+function dbUrl() {
+  if (process.env.TURSO_DATABASE_URL) return process.env.TURSO_DATABASE_URL;
   const file = process.env.STALE_DB ?? "data/stale.db";
-  if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true });
-  const db = new sqlite.DatabaseSync(file);
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
+  if (file === ":memory:") return ":memory:";
+  mkdirSync(dirname(file), { recursive: true });
+  return `file:${file}`;
+}
+
+/** The control-plane client: Turso/libSQL when TURSO_DATABASE_URL is set (Vercel etc.), else a local SQLite file. */
+export async function sys(): Promise<Promise<Client>> {
+  if (!g.__staleSys) {
+    g.__staleSys = (async () => {
+      const db = createClient({ url: dbUrl(), authToken: process.env.TURSO_AUTH_TOKEN });
+      await db.execute("PRAGMA foreign_keys = ON");
+      await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
       password_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
@@ -73,25 +76,32 @@ export function sys(): Db {
       kind TEXT NOT NULL, external_id TEXT NOT NULL, status TEXT NOT NULL, summary TEXT, created_at INTEGER NOT NULL,
       PRIMARY KEY (org_id, kind, external_id));
   `);
-  g.__staleSys = db;
-  return db;
+      return db;
+    })();
+    g.__staleSys.catch(() => (g.__staleSys = undefined));
+  }
+  return g.__staleSys;
 }
 
 export function closeSys() {
-  g.__staleSys?.close();
+  g.__staleSys?.then((d) => d.close());
   g.__staleSys = undefined;
 }
 
 const now = () => Date.now();
 const rid = (p: string) => `${p}_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
-// node:sqlite returns null-prototype rows; copy them so they can cross the server/client boundary.
-const q = <T = any,>(sql: string, ...args: any[]) => sys().prepare(sql).all(...args).map((r) => ({ ...r })) as T[];
-const one = <T = any,>(sql: string, ...args: any[]) => {
-  const r = sys().prepare(sql).get(...args);
-  return r ? ({ ...r } as T) : undefined;
+// Copy rows into plain objects so they can cross the server/client boundary.
+const exec = async (sql: string, args: any[]) => (await sys()).execute({ sql, args });
+const q = async <T = any,>(sql: string, ...args: any[]) => {
+  const rs = await exec(sql, args);
+  return rs.rows.map((r) => Object.fromEntries(rs.columns.map((c) => [c, r[c]]))) as T[];
 };
-const run = (sql: string, ...args: any[]) => sys().prepare(sql).run(...args);
+const one = async <T = any,>(sql: string, ...args: any[]) => (await q<T>(sql, ...args))[0];
+const run = async (sql: string, ...args: any[]) => {
+  const rs = await exec(sql, args);
+  return { changes: rs.rowsAffected };
+};
 
 /* ------------------------------------------------------------------ */
 /* Secrets at rest (integration tokens)                                */
@@ -138,78 +148,78 @@ const orgFromRow = (r: any): Org => ({
   settings: { ...DEFAULT_SETTINGS, ...JSON.parse(r.settings || "{}") },
 });
 
-export function createAccount(input: { name: string; email: string; password: string; orgName: string }) {
+export async function createAccount(input: { name: string; email: string; password: string; orgName: string }) {
   const email = input.email.trim().toLowerCase();
-  if (one("SELECT id FROM users WHERE email = ?", email)) throw conflict("An account with this email already exists");
+  if (await one("SELECT id FROM users WHERE email = ?", email)) throw conflict("An account with this email already exists");
   const user: User = { id: rid("usr"), email, name: input.name.trim() };
   const org: Org = { id: rid("org"), name: input.orgName.trim(), settings: DEFAULT_SETTINGS };
-  run("INSERT INTO users VALUES (?,?,?,?,?)", user.id, email, user.name, hashPassword(input.password), now());
-  run("INSERT INTO orgs VALUES (?,?,?,?)", org.id, org.name, "{}", now());
-  run("INSERT INTO members VALUES (?,?,?)", org.id, user.id, "admin");
+  await run("INSERT INTO users VALUES (?,?,?,?,?)", user.id, email, user.name, hashPassword(input.password), now());
+  await run("INSERT INTO orgs VALUES (?,?,?,?)", org.id, org.name, "{}", now());
+  await run("INSERT INTO members VALUES (?,?,?)", org.id, user.id, "admin");
   return { user, org };
 }
 
 /** Operator tool (CLI only, not exposed over HTTP): set a new password and sign the user out everywhere. */
-export function resetPassword(email: string, password: string) {
+export async function resetPassword(email: string, password: string) {
   if (password.length < 8) throw badRequest("Password must be at least 8 characters");
-  const row = one("SELECT id FROM users WHERE email = ?", email.trim().toLowerCase());
+  const row = await one("SELECT id FROM users WHERE email = ?", email.trim().toLowerCase());
   if (!row) throw notFound("account", email);
-  run("UPDATE users SET password_hash = ? WHERE id = ?", hashPassword(password), row.id);
-  run("DELETE FROM sessions WHERE user_id = ?", row.id);
+  await run("UPDATE users SET password_hash = ? WHERE id = ?", hashPassword(password), row.id);
+  await run("DELETE FROM sessions WHERE user_id = ?", row.id);
 }
 
-export function verifyLogin(email: string, password: string): User {
-  const row = one("SELECT * FROM users WHERE email = ?", email.trim().toLowerCase());
+export async function verifyLogin(email: string, password: string): Promise<User> {
+  const row = await one("SELECT * FROM users WHERE email = ?", email.trim().toLowerCase());
   // Always run a hash to keep timing flat for unknown emails.
   const ok = row ? checkPassword(password, row.password_hash) : (checkPassword(password, "00:" + "0".repeat(128)), false);
   if (!row || !ok) throw new StaleError(401, "Incorrect email or password");
   return { id: row.id, email: row.email, name: row.name };
 }
-export function orgsOf(userId: string): (Org & { role: Role })[] {
-  return q(
+export async function orgsOf(userId: string): Promise<(Org & { role: Role })[]> {
+  return (await q(
     "SELECT o.*, m.role FROM orgs o JOIN members m ON m.org_id = o.id WHERE m.user_id = ? ORDER BY o.created_at",
     userId,
-  ).map((r) => ({ ...orgFromRow(r), role: r.role as Role }));
+  )).map((r) => ({ ...orgFromRow(r), role: r.role as Role }));
 }
 
-export function getOrg(id: string): Org {
-  const r = one("SELECT * FROM orgs WHERE id = ?", id);
+export async function getOrg(id: string): Promise<Org> {
+  const r = await one("SELECT * FROM orgs WHERE id = ?", id);
   if (!r) throw notFound("Workspace", id);
   return orgFromRow(r);
 }
 
-export function updateOrg(id: string, patch: { name?: string; settings?: Partial<OrgSettings> }) {
-  const org = getOrg(id);
+export async function updateOrg(id: string, patch: { name?: string; settings?: Partial<OrgSettings> }) {
+  const org = await getOrg(id);
   const name = patch.name?.trim() || org.name;
   const settings = { ...org.settings, ...(patch.settings ?? {}) };
-  run("UPDATE orgs SET name = ?, settings = ? WHERE id = ?", name, JSON.stringify(settings), id);
-  return getOrg(id);
+  await run("UPDATE orgs SET name = ?, settings = ? WHERE id = ?", name, JSON.stringify(settings), id);
+  return await getOrg(id);
 }
 
-export function listMembers(orgId: string) {
-  return q(
+export async function listMembers(orgId: string) {
+  return await q(
     "SELECT u.id, u.name, u.email, m.role FROM members m JOIN users u ON u.id = m.user_id WHERE m.org_id = ? ORDER BY u.created_at",
     orgId,
   ) as (User & { role: Role })[];
 }
 
-export function addMemberByEmail(orgId: string, email: string, role: Role) {
-  const u = one("SELECT id FROM users WHERE email = ?", email.trim().toLowerCase());
+export async function addMemberByEmail(orgId: string, email: string, role: Role) {
+  const u = await one("SELECT id FROM users WHERE email = ?", email.trim().toLowerCase());
   if (!u) throw notFound("User", email);
-  run("INSERT OR REPLACE INTO members VALUES (?,?,?)", orgId, u.id, role);
+  await run("INSERT OR REPLACE INTO members VALUES (?,?,?)", orgId, u.id, role);
 }
 
-export function removeMember(orgId: string, userId: string) {
-  const admins = q("SELECT user_id FROM members WHERE org_id = ? AND role = 'admin'", orgId);
+export async function removeMember(orgId: string, userId: string) {
+  const admins = await q("SELECT user_id FROM members WHERE org_id = ? AND role = 'admin'", orgId);
   if (admins.length === 1 && admins[0].user_id === userId) throw badRequest("A workspace needs at least one admin");
-  run("DELETE FROM members WHERE org_id = ? AND user_id = ?", orgId, userId);
+  await run("DELETE FROM members WHERE org_id = ? AND user_id = ?", orgId, userId);
 }
 
 const SESSION_MS = 1000 * 60 * 60 * 24 * 14;
 
-export function createSession(userId: string, orgId: string) {
+export async function createSession(userId: string, orgId: string) {
   const token = randomBytes(32).toString("base64url");
-  run("INSERT INTO sessions VALUES (?,?,?,?)", sha(token), userId, orgId, now() + SESSION_MS);
+  await run("INSERT INTO sessions VALUES (?,?,?,?)", sha(token), userId, orgId, now() + SESSION_MS);
   return { token, maxAge: SESSION_MS / 1000 };
 }
 
@@ -220,50 +230,50 @@ export interface Principal {
   via: "session" | "api_key";
 }
 
-export function resolveSession(token: string | undefined): Principal | null {
+export async function resolveSession(token: string | undefined): Promise<Principal | null> {
   if (!token) return null;
-  const s = one("SELECT * FROM sessions WHERE token_hash = ?", sha(token));
+  const s = await one("SELECT * FROM sessions WHERE token_hash = ?", sha(token));
   if (!s || s.expires_at < now()) return null;
-  const m = one("SELECT role FROM members WHERE org_id = ? AND user_id = ?", s.org_id, s.user_id);
-  const u = one("SELECT id, email, name FROM users WHERE id = ?", s.user_id);
+  const m = await one("SELECT role FROM members WHERE org_id = ? AND user_id = ?", s.org_id, s.user_id);
+  const u = await one("SELECT id, email, name FROM users WHERE id = ?", s.user_id);
   if (!m || !u) return null;
-  return { user: u, org: getOrg(s.org_id), role: m.role, via: "session" };
+  return { user: u, org: await getOrg(s.org_id), role: m.role, via: "session" };
 }
 
-export function switchOrg(token: string, userId: string, orgId: string) {
-  if (!one("SELECT 1 FROM members WHERE org_id = ? AND user_id = ?", orgId, userId)) throw notFound("Workspace", orgId);
-  run("UPDATE sessions SET org_id = ? WHERE token_hash = ?", orgId, sha(token));
+export async function switchOrg(token: string, userId: string, orgId: string) {
+  if (!await one("SELECT 1 FROM members WHERE org_id = ? AND user_id = ?", orgId, userId)) throw notFound("Workspace", orgId);
+  await run("UPDATE sessions SET org_id = ? WHERE token_hash = ?", orgId, sha(token));
 }
 
-export function deleteSession(token: string) {
-  run("DELETE FROM sessions WHERE token_hash = ?", sha(token));
+export async function deleteSession(token: string) {
+  await run("DELETE FROM sessions WHERE token_hash = ?", sha(token));
 }
 
 /* ------------------------------------------------------------------ */
 /* API keys                                                            */
 /* ------------------------------------------------------------------ */
 
-export function createApiKey(orgId: string, name: string) {
+export async function createApiKey(orgId: string, name: string) {
   const secret = `sk_${randomBytes(24).toString("base64url")}`;
   const id = rid("key");
-  run("INSERT INTO api_keys VALUES (?,?,?,?,?,?,NULL)", id, orgId, name.trim(), secret.slice(0, 10), sha(secret), now());
+  await run("INSERT INTO api_keys VALUES (?,?,?,?,?,?,NULL)", id, orgId, name.trim(), secret.slice(0, 10), sha(secret), now());
   return { id, name, secret }; // the secret is shown once and never stored in clear
 }
 
-export function resolveApiKey(secret: string | undefined): Principal | null {
+export async function resolveApiKey(secret: string | undefined): Promise<Principal | null> {
   if (!secret || !secret.startsWith("sk_")) return null;
-  const k = one("SELECT * FROM api_keys WHERE key_hash = ?", sha(secret));
+  const k = await one("SELECT * FROM api_keys WHERE key_hash = ?", sha(secret));
   if (!k) return null;
-  run("UPDATE api_keys SET last_used = ? WHERE id = ?", now(), k.id);
-  return { user: null, org: getOrg(k.org_id), role: "member", via: "api_key" };
+  await run("UPDATE api_keys SET last_used = ? WHERE id = ?", now(), k.id);
+  return { user: null, org: await getOrg(k.org_id), role: "member", via: "api_key" };
 }
 
-export function listApiKeys(orgId: string) {
-  return q("SELECT id, name, prefix, created_at, last_used FROM api_keys WHERE org_id = ? ORDER BY created_at DESC", orgId);
+export async function listApiKeys(orgId: string) {
+  return await q("SELECT id, name, prefix, created_at, last_used FROM api_keys WHERE org_id = ? ORDER BY created_at DESC", orgId);
 }
 
-export function revokeApiKey(orgId: string, id: string) {
-  const r = run("DELETE FROM api_keys WHERE org_id = ? AND id = ?", orgId, id);
+export async function revokeApiKey(orgId: string, id: string) {
+  const r = await run("DELETE FROM api_keys WHERE org_id = ? AND id = ?", orgId, id);
   if (!r.changes) throw notFound("API key", id);
 }
 
@@ -288,47 +298,47 @@ const integ = (r: any): Integration => ({
   created_at: r.created_at, last_event: r.last_event, events: r.events,
 });
 
-export function createIntegration(orgId: string, type: IntegrationType, name: string, config: Record<string, unknown>) {
+export async function createIntegration(orgId: string, type: IntegrationType, name: string, config: Record<string, unknown>) {
   const id = rid("int");
-  run("INSERT INTO integrations (id, org_id, type, name, config, created_at) VALUES (?,?,?,?,?,?)",
+  await run("INSERT INTO integrations (id, org_id, type, name, config, created_at) VALUES (?,?,?,?,?,?)",
     id, orgId, type, name.trim(), encrypt(JSON.stringify(config)), now());
-  return getIntegration(orgId, id);
+  return await getIntegration(orgId, id);
 }
 
-export function getIntegration(orgId: string, id: string): Integration {
-  const r = one("SELECT * FROM integrations WHERE org_id = ? AND id = ?", orgId, id);
+export async function getIntegration(orgId: string, id: string): Promise<Integration> {
+  const r = await one("SELECT * FROM integrations WHERE org_id = ? AND id = ?", orgId, id);
   if (!r) throw notFound("Integration", id);
   return integ(r);
 }
 
 /** Lookup without an org: webhooks authenticate by the integration's own secret instead. */
-export function findIntegration(id: string): (Integration & { config: Record<string, any> }) | null {
-  const r = one("SELECT * FROM integrations WHERE id = ?", id);
+export async function findIntegration(id: string): Promise<(Integration & { config: Record<string, any> }) | null> {
+  const r = await one("SELECT * FROM integrations WHERE id = ?", id);
   if (!r) return null;
   return { ...integ(r), config: r.config ? JSON.parse(decrypt(r.config)) : {} };
 }
 
-export function integrationConfig(orgId: string, id: string): Record<string, any> {
-  const r = one("SELECT config FROM integrations WHERE org_id = ? AND id = ?", orgId, id);
+export async function integrationConfig(orgId: string, id: string): Promise<Record<string, any>> {
+  const r = await one("SELECT config FROM integrations WHERE org_id = ? AND id = ?", orgId, id);
   if (!r) throw notFound("Integration", id);
   return r.config ? JSON.parse(decrypt(r.config)) : {};
 }
 
-export function updateIntegrationConfig(orgId: string, id: string, patch: Record<string, unknown>) {
+export async function updateIntegrationConfig(orgId: string, id: string, patch: Record<string, unknown>) {
   const cfg = { ...integrationConfig(orgId, id), ...patch };
-  run("UPDATE integrations SET config = ? WHERE org_id = ? AND id = ?", encrypt(JSON.stringify(cfg)), orgId, id);
+  await run("UPDATE integrations SET config = ? WHERE org_id = ? AND id = ?", encrypt(JSON.stringify(cfg)), orgId, id);
 }
 
-export function listIntegrations(orgId: string) {
-  return q("SELECT * FROM integrations WHERE org_id = ? ORDER BY created_at", orgId).map(integ);
+export async function listIntegrations(orgId: string) {
+  return (await q("SELECT * FROM integrations WHERE org_id = ? ORDER BY created_at", orgId)).map(integ);
 }
 
-export function touchIntegration(id: string) {
-  run("UPDATE integrations SET last_event = ?, events = events + 1 WHERE id = ?", now(), id);
+export async function touchIntegration(id: string) {
+  await run("UPDATE integrations SET last_event = ?, events = events + 1 WHERE id = ?", now(), id);
 }
 
-export function deleteIntegration(orgId: string, id: string) {
-  if (!run("DELETE FROM integrations WHERE org_id = ? AND id = ?", orgId, id).changes) throw notFound("Integration", id);
+export async function deleteIntegration(orgId: string, id: string) {
+  if (!(await run("DELETE FROM integrations WHERE org_id = ? AND id = ?", orgId, id)).changes) throw notFound("Integration", id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -346,41 +356,41 @@ export interface ReviewItem {
 }
 const rev = (r: any): ReviewItem => ({ ...r, payload: JSON.parse(r.payload) });
 
-export function createReview(orgId: string, payload: unknown) {
+export async function createReview(orgId: string, payload: unknown) {
   const id = rid("rev");
-  run("INSERT INTO review_items (id, org_id, payload, created_at) VALUES (?,?,?,?)", id, orgId, JSON.stringify(payload), now());
-  return getReview(orgId, id);
+  await run("INSERT INTO review_items (id, org_id, payload, created_at) VALUES (?,?,?,?)", id, orgId, JSON.stringify(payload), now());
+  return await getReview(orgId, id);
 }
-export function getReview(orgId: string, id: string): ReviewItem {
-  const r = one("SELECT * FROM review_items WHERE org_id = ? AND id = ?", orgId, id);
+export async function getReview(orgId: string, id: string): Promise<ReviewItem> {
+  const r = await one("SELECT * FROM review_items WHERE org_id = ? AND id = ?", orgId, id);
   if (!r) throw notFound("Review item", id);
   return rev(r);
 }
-export function listReviews(orgId: string, status?: string) {
-  return q(
+export async function listReviews(orgId: string, status?: string) {
+  return (await q(
     `SELECT * FROM review_items WHERE org_id = ? ${status ? "AND status = ?" : ""} ORDER BY created_at DESC LIMIT 200`,
     ...(status ? [orgId, status] : [orgId]),
-  ).map(rev);
+  )).map(rev);
 }
-export function decideReview(orgId: string, id: string, status: "approved" | "rejected", by: string) {
-  const r = getReview(orgId, id);
+export async function decideReview(orgId: string, id: string, status: "approved" | "rejected", by: string) {
+  const r = await getReview(orgId, id);
   if (r.status !== "pending") throw conflict(`Already ${r.status}`);
-  run("UPDATE review_items SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?", status, by, now(), id);
+  await run("UPDATE review_items SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?", status, by, now(), id);
 }
-export function pendingReviewCount(orgId: string) {
-  return one("SELECT COUNT(*) c FROM review_items WHERE org_id = ? AND status = 'pending'", orgId)!.c as number;
-}
-
-export function ingestSeen(orgId: string, kind: string, externalId: string) {
-  return !!one("SELECT 1 FROM ingest_log WHERE org_id = ? AND kind = ? AND external_id = ?", orgId, kind, externalId);
-}
-export function ingestRecord(orgId: string, kind: string, externalId: string, status: string, summary: string) {
-  run("INSERT OR REPLACE INTO ingest_log VALUES (?,?,?,?,?,?)", orgId, kind, externalId, status, summary, now());
-}
-export function ingestRecent(orgId: string, limit = 40) {
-  return q("SELECT * FROM ingest_log WHERE org_id = ? ORDER BY created_at DESC LIMIT ?", orgId, limit);
+export async function pendingReviewCount(orgId: string) {
+  return (await one("SELECT COUNT(*) c FROM review_items WHERE org_id = ? AND status = 'pending'", orgId))!.c as number;
 }
 
-export function setIntegrationStatus(orgId: string, id: string, status: Integration["status"]) {
-  run("UPDATE integrations SET status = ? WHERE org_id = ? AND id = ?", status, orgId, id);
+export async function ingestSeen(orgId: string, kind: string, externalId: string) {
+  return !!await one("SELECT 1 FROM ingest_log WHERE org_id = ? AND kind = ? AND external_id = ?", orgId, kind, externalId);
+}
+export async function ingestRecord(orgId: string, kind: string, externalId: string, status: string, summary: string) {
+  await run("INSERT OR REPLACE INTO ingest_log VALUES (?,?,?,?,?,?)", orgId, kind, externalId, status, summary, now());
+}
+export async function ingestRecent(orgId: string, limit = 40) {
+  return await q("SELECT * FROM ingest_log WHERE org_id = ? ORDER BY created_at DESC LIMIT ?", orgId, limit);
+}
+
+export async function setIntegrationStatus(orgId: string, id: string, status: Integration["status"]) {
+  await run("UPDATE integrations SET status = ? WHERE org_id = ? AND id = ?", status, orgId, id);
 }

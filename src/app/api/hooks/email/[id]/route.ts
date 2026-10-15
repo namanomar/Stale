@@ -29,7 +29,7 @@ const addressOf = (from: string) => (from.match(/<([^>]+)>/)?.[1] ?? from).trim(
  * Mail from your company domains is trusted; mail from anyone else is remembered but untrusted.
  */
 export const POST = plain(async (req, { id }) => {
-  const integ = findIntegration(id);
+  const integ = await findIntegration(id);
   if (!integ || integ.type !== "email") throw new StaleError(404, "Unknown connection");
   const given = req.headers.get("x-stale-secret") ?? req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   const want = String(integ.config.secret);
@@ -44,7 +44,7 @@ export const POST = plain(async (req, { id }) => {
   const company: string[] = integ.config.companyDomains ?? [];
   const subject = b.subject ?? b.Subject ?? "";
   const when = Date.parse(b.date ?? b.Date ?? "");
-  const org = getOrg(integ.org_id);
+  const org = await getOrg(integ.org_id);
   return ingestDocument(org, await Memory.open(org.id), {
     kind: "email",
     integrationId: integ.id,

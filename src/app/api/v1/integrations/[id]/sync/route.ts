@@ -7,10 +7,10 @@ import { ingestAll, streamJob } from "@/lib/sync";
 
 /** GET lists what can be synced (channels, repos, projects, pages). */
 export const GET = route(async ({ principal, params }) => {
-  const i = getIntegration(principal.org.id, params.id);
+  const i = await getIntegration(principal.org.id, params.id);
   const c = PULL[i.type];
   if (!c) throw badRequest(`${i.type} connections are push-only; there is nothing to import`);
-  return { noun: c.scopeNoun, label: c.label, items: await c.scopes(integrationConfig(principal.org.id, i.id)) };
+  return { noun: c.scopeNoun, label: c.label, items: await c.scopes(await integrationConfig(principal.org.id, i.id)) };
 });
 
 /** POST imports the chosen scope and streams progress as newline-delimited JSON. */
@@ -22,10 +22,10 @@ export const POST = route(
         limit: z.number().int().min(1).max(200).default(50),
       }),
     );
-    const i = getIntegration(principal.org.id, params.id);
+    const i = await getIntegration(principal.org.id, params.id);
     const c = PULL[i.type];
     if (!c) throw badRequest(`${i.type} connections cannot be imported`);
-    const cfg = integrationConfig(principal.org.id, i.id);
+    const cfg = await integrationConfig(principal.org.id, i.id);
     return streamJob(async (send) => {
       send({ t: "stage", text: `Fetching from ${c.label}…` });
       const docs = await c.pull(cfg, i.id, scope, limit);

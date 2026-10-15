@@ -34,7 +34,7 @@ export function readCookie(req: Request, name: string) {
  * Who is calling? A signed-in browser session or an `Authorization: Bearer sk_...` API key.
  * `STALE_AUTH=off` (local dev / tests only) trusts the `x-tenant-id` header instead.
  */
-export function authenticate(req: Request, url = new URL(req.url)): Principal {
+export async function authenticate(req: Request, url = new URL(req.url)): Promise<Principal> {
   if (authDisabled()) {
     const key = process.env.STALE_API_KEY;
     if (key && req.headers.get("authorization") !== `Bearer ${key}`) {
@@ -44,7 +44,7 @@ export function authenticate(req: Request, url = new URL(req.url)): Principal {
     return { user: null, org: { id: tenant, name: tenant, settings: { autoApply: "trusted" } }, role: "admin", via: "api_key" };
   }
   const bearer = req.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const p = bearer ? resolveApiKey(bearer) : resolveSession(readCookie(req, SESSION_COOKIE));
+  const p = bearer ? await resolveApiKey(bearer) : await resolveSession(readCookie(req, SESSION_COOKIE));
   if (!p) throw new StaleError(401, "Sign in required");
   return p;
 }
@@ -90,7 +90,7 @@ export function route(
   return async (req: Request, routeCtx?: { params?: Promise<Record<string, string>> }) => {
     try {
       const url = new URL(req.url);
-      const principal = authenticate(req, url);
+      const principal = await authenticate(req, url);
       requireRole(principal, opts.min ?? (req.method === "GET" ? "viewer" : "member"));
       const mem = await Memory.open(principal.org.id);
       const params = (await routeCtx?.params) ?? {};

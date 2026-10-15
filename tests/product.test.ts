@@ -23,6 +23,12 @@ import * as genericHook from "../src/app/api/hooks/generic/[id]/route";
 import * as mcp from "../src/app/api/mcp/route";
 import { setLlmForTests } from "../src/lib/llm";
 import { closeSys, sys } from "../src/lib/system";
+
+const getRows = async (sql: string, ...args: any[]): Promise<any[]> => {
+  const rs = await (await sys()).execute({ sql, args });
+  return rs.rows.map((r) => Object.fromEntries(rs.columns.map((c) => [c, r[c]])));
+};
+const getRow = async (sql: string, ...args: any[]) => (await getRows(sql, ...args))[0];
 import { call, cleanupAfterAll } from "./helpers";
 
 cleanupAfterAll();
@@ -112,14 +118,14 @@ describe("accounts and sessions", () => {
 
   it("secrets are not stored in clear: password hash is salted, session token is hashed", async () => {
     const a = await newAccount("hash", "my-very-unique-passphrase");
-    const row: any = sys().prepare("SELECT password_hash FROM users WHERE id = ?").get(a.userId);
+    const row: any = await getRow("SELECT password_hash FROM users WHERE id = ?", a.userId);
     assert.ok(!row.password_hash.includes("my-very-unique-passphrase"));
     assert.match(row.password_hash, /^[0-9a-f]{32}:[0-9a-f]{128}$/);
     const token = decodeURIComponent(a.cookie.split("=")[1]);
-    const sessions: any[] = sys().prepare("SELECT token_hash FROM sessions").all() as any[];
+    const sessions: any[] = await getRows("SELECT token_hash FROM sessions");
     assert.ok(sessions.every((s) => s.token_hash !== token));
     const b = await newAccount("hash2", "my-very-unique-passphrase");
-    const row2: any = sys().prepare("SELECT password_hash FROM users WHERE id = ?").get(b.userId);
+    const row2: any = await getRow("SELECT password_hash FROM users WHERE id = ?", b.userId);
     assert.notEqual(row.password_hash, row2.password_hash, "same password, different salt");
   });
 
@@ -186,7 +192,7 @@ describe("workspaces, roles and API keys", () => {
     const listed = await call(keys.GET as any, as(a.cookie));
     assert.ok(!JSON.stringify(listed.json).includes(secret), "list never returns the secret");
     assert.equal(listed.json[0].prefix, secret.slice(0, 10));
-    const stored: any[] = sys().prepare("SELECT key_hash FROM api_keys").all() as any[];
+    const stored: any[] = await getRows("SELECT key_hash FROM api_keys");
     assert.ok(stored.every((k) => k.key_hash !== secret));
 
     const viaKey = await call(graph.GET as any, { headers: { authorization: `Bearer ${secret}` } });
@@ -514,7 +520,7 @@ describe("connectors", () => {
 
   it("integration secrets are encrypted at rest and never returned", async () => {
     const { a, id } = await connect();
-    const row: any = sys().prepare("SELECT config FROM integrations WHERE id = ?").get(id);
+    const row: any = await getRow("SELECT config FROM integrations WHERE id = ?", id);
     assert.ok(!row.config.includes(SECRET));
     const list = await call(integrations.GET as any, as(a.cookie));
     assert.ok(!JSON.stringify(list.json).includes(SECRET));

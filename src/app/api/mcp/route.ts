@@ -10,7 +10,7 @@ import { Memory } from "@/lib/memory";
  */
 async function handle(req: Request) {
   try {
-    const principal = authenticate(req);
+    const principal = await authenticate(req);
     requireRole(principal, "member");
     const mem = await Memory.open(principal.org.id);
     const server = buildMcpServer(mem);

@@ -17,7 +17,7 @@ const input = z.object({
 
 /** Connect anything: Zapier, n8n, a cron job, your CRM. POST JSON with the connection's secret. */
 export const POST = plain(async (req, { id }) => {
-  const integ = findIntegration(id);
+  const integ = await findIntegration(id);
   if (!integ || integ.type !== "webhook") throw new StaleError(404, "Unknown connection");
   const given =
     req.headers.get("x-stale-secret") ?? req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
@@ -26,7 +26,7 @@ export const POST = plain(async (req, { id }) => {
     throw new StaleError(401, "Bad secret");
   }
   const b = await jsonBody(req, input);
-  const org = getOrg(integ.org_id);
+  const org = await getOrg(integ.org_id);
   return ingestDocument(org, await Memory.open(org.id), {
     kind: "webhook",
     integrationId: integ.id,

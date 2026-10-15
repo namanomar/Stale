@@ -12,7 +12,7 @@ export const PATCH = route(
         settings: z.object({ autoApply: z.enum(["trusted", "never"]).optional() }).optional(),
       }),
     );
-    return updateOrg(principal.org.id, patch);
+    return await updateOrg(principal.org.id, patch);
   },
   { min: "admin" },
 );

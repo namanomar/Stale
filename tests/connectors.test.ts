@@ -323,7 +323,7 @@ describe("access control and validation", () => {
     fakeNet({ "api.github.com/user": () => ({ login: "octo" }) });
     await call(integrations.POST as any, { ...as(a.cookie), body: { type: "github", token: "ghp_SUPERSECRETVALUE" } });
     const { sys } = await import("../src/lib/system");
-    const rows = (sys() as any).prepare("SELECT config FROM integrations").all() as { config: string }[];
+    const rows = (await (await sys()).execute("SELECT config FROM integrations")).rows as unknown as { config: string }[];
     assert.ok(rows.length > 0);
     assert.ok(rows.every((r) => !String(r.config).includes("ghp_SUPERSECRETVALUE")));
   });

@@ -12,8 +12,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     user: p.user,
     org: p.org,
     role: p.role,
-    orgs: orgsOf(p.user.id).map((o) => ({ id: o.id, name: o.name, role: o.role })),
-    pendingReviews: pendingReviewCount(p.org.id),
+    orgs: (await orgsOf(p.user.id)).map((o) => ({ id: o.id, name: o.name, role: o.role })),
+    pendingReviews: await pendingReviewCount(p.org.id),
   };
   return <Shell initial={initial}>{children}</Shell>;
 }

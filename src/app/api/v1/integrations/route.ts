@@ -10,7 +10,7 @@ const hookPath: Record<string, string> = { slack: "slack", webhook: "generic", e
 
 export const GET = route(async ({ principal, req }) => {
   const origin = new URL(req.url).origin;
-  return listIntegrations(principal.org.id).map((i) => ({
+  return (await listIntegrations(principal.org.id)).map((i) => ({
     ...i,
     webhookUrl: hookPath[i.type] ? `${origin}/api/hooks/${hookPath[i.type]}/${i.id}` : undefined,
     syncable: i.type in PULL,
@@ -60,7 +60,7 @@ export const POST = route(
           throw badRequest(`Slack rejected that bot token (${e instanceof Error ? e.message : e})`);
         }
       }
-      const i = createIntegration(org, "slack", b.name, {
+      const i = await createIntegration(org, "slack", b.name, {
         signingSecret: b.signingSecret,
         botToken: b.botToken,
         teamId,
@@ -71,7 +71,7 @@ export const POST = route(
 
     if (b.type === "webhook" || b.type === "email") {
       const secret = `whs_${randomBytes(18).toString("base64url")}`;
-      const i = createIntegration(org, b.type, b.name, {
+      const i = await createIntegration(org, b.type, b.name, {
         secret,
         ...(b.type === "email" ? { companyDomains: b.companyDomains } : {}),
       });
@@ -84,7 +84,7 @@ export const POST = route(
         ? { site: normalizeJiraSite(b.site), email: b.email, token: b.token }
         : { token: b.token };
     const who = await PULL[b.type].test(cfg);
-    const i = createIntegration(org, b.type, b.name, cfg);
+    const i = await createIntegration(org, b.type, b.name, cfg);
     return Response.json({ ...i, account: who, syncable: true }, { status: 201 });
   },
   { min: "admin" },
