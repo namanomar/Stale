@@ -22,6 +22,8 @@ export default async function Landing() {
             <a href="#sources">How it learns</a>
             <a href="#firewall">What it blocks</a>
             <a href="#agents">For agents</a>
+            <Link href="/docs">Docs</Link>
+            <Link href="/docs/pricing">Pricing</Link>
           </div>
           <div className="sp">
             <ThemeToggle />
@@ -118,6 +120,8 @@ check_action · repair_plan · resolve`}</div>
         <footer className="lp-foot">
           <span>Stale</span>
           <span>Built on FalkorDB</span>
+          <Link href="/docs">Docs</Link>
+          <Link href="/docs/pricing">Pricing</Link>
           <Link href="/login">Sign in</Link>
         </footer>
       </div>
