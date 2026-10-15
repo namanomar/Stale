@@ -23,10 +23,7 @@ OPENAI_MODEL=gpt-4o
 # Billing (optional). Without these there are no plan limits.
 RAZORPAY_API_KEY=rzp_test_...
 RAZORPAY_SECRET=
-RAZORPAY_WEBHOOK_SECRET=
-# created for you by: npm run razorpay:setup
-RAZORPAY_PLAN_TEAM_MONTHLY=
-RAZORPAY_PLAN_TEAM_YEARLY=`;
+RAZORPAY_WEBHOOK_SECRET=`;
 
 export default function SelfHost() {
   return (
@@ -55,7 +52,7 @@ export default function SelfHost() {
           <tr><td><code>STALE_SECRET</code></td><td>In production</td><td>Encryption key for stored integration tokens.</td></tr>
           <tr><td><code>OPENAI_API_KEY</code></td><td>Recommended</td><td>Better claim extraction. Without it a rules engine runs.</td></tr>
           <tr><td><code>RAZORPAY_API_KEY</code>, <code>RAZORPAY_SECRET</code></td><td>For paid plans</td><td>Turns plans and limits on. Also accepted as <code>RAZORPAY_KEY_ID</code> / <code>RAZORPAY_KEY_SECRET</code>. Unset means unlimited.</td></tr>
-          <tr><td><code>RAZORPAY_WEBHOOK_SECRET</code></td><td>For paid plans</td><td>Verifies renewal and cancellation events sent to <code>/api/hooks/razorpay</code>.</td></tr>
+          <tr><td><code>RAZORPAY_WEBHOOK_SECRET</code></td><td>For paid plans</td><td>Optional backup: verifies <code>order.paid</code> events sent to <code>/api/hooks/razorpay</code>.</td></tr>
           <tr><td><code>STALE_DB</code></td><td>No</td><td>Path of the local SQLite file (default <code>data/stale.db</code>).</td></tr>
           <tr><td><code>STALE_AUTH=off</code></td><td>Never in production</td><td>Dev and tests only. Trusts a tenant header instead of login.</td></tr>
         </tbody>

@@ -1,7 +1,7 @@
 import { StaleError } from "./errors";
-import { PLANS, type PlanDef, type PlanId } from "./plans";
-import { billingEnabled } from "./razorpay";
-import { countIntegrations, countMembers, getBillingRow, messagesUsed } from "./system";
+import { PLANS, type Interval, type PlanDef, type PlanId } from "./plans";
+import { billingEnabled, priceInPaise } from "./razorpay";
+import { countIntegrations, countMembers, getBillingRow, messagesUsed, recordPayment, saveBilling } from "./system";
 
 /**
  * Which plan is this workspace on right now, and what may it still do?
@@ -10,7 +10,7 @@ import { countIntegrations, countMembers, getBillingRow, messagesUsed } from "./
 export async function effectivePlan(orgId: string): Promise<PlanDef> {
   if (!billingEnabled()) return PLANS.enterprise;
   const b = await getBillingRow(orgId);
-  const paying = b.status === "active" || (b.status === "cancelling" && (b.period_end ?? 0) > Date.now());
+  const paying = b.status === "active" && (b.period_end ?? 0) > Date.now();
   return paying ? PLANS[b.plan as PlanId] : PLANS.free;
 }
 
@@ -36,6 +36,28 @@ export async function assertCanAddConnector(orgId: string) {
   const plan = await effectivePlan(orgId);
   if (plan.connectors === null) return;
   if ((await countIntegrations(orgId)) >= plan.connectors) throw over("connectors", plan, plan.connectors);
+}
+
+const DAY = 86_400_000;
+
+/**
+ * A paid Razorpay order buys time on a plan. Counted once per order, so the browser callback and the
+ * webhook can both report it. Paying again before the period ends adds to the end date.
+ */
+export async function applyPaidOrder(order: { id: string; amount: number; notes?: Record<string, string> }) {
+  const orgId = order.notes?.org_id;
+  const plan = order.notes?.plan as PlanId | undefined;
+  const interval = order.notes?.interval as Interval | undefined;
+  if (!orgId || plan !== "team" || (interval !== "monthly" && interval !== "yearly")) {
+    throw new StaleError(400, "This order is not a Stale plan purchase");
+  }
+  if (order.amount !== priceInPaise(plan, interval)) throw new StaleError(400, "Order amount does not match the plan price");
+  if (!(await recordPayment({ orderId: order.id, orgId, plan, interval, amount: order.amount }))) return { applied: false };
+
+  const cur = await getBillingRow(orgId);
+  const base = cur.status === "active" && (cur.period_end ?? 0) > Date.now() ? cur.period_end! : Date.now();
+  await saveBilling(orgId, { plan, interval, status: "active", period_end: base + (interval === "yearly" ? 365 : 30) * DAY });
+  return { applied: true, orgId };
 }
 
 export async function billingSummary(orgId: string) {

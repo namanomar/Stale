@@ -12,7 +12,7 @@ export default function Pricing() {
         lead="Priced by the work Stale does for you, not by how many people look at it. Free to start, and you only pay when your team depends on it."
       />
 
-      <Note kind="tip" title="Test mode">Payments run through Razorpay. While the keys are test keys, no real money moves: use Razorpay’s test cards and UPI ids.</Note>
+      <Note kind="tip" title="Test mode">Payments run through Razorpay. While the keys are test keys, no real money moves: use Razorpay’s test cards and UPI ids. One payment buys a month or a year of Team. When it runs out you’re back on Free, and nothing is deleted.</Note>
 
       <PricingTable />
 

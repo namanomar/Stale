@@ -79,7 +79,9 @@ export async function sys(): Promise<Promise<Client>> {
       org_id TEXT PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
       plan TEXT NOT NULL DEFAULT 'free', status TEXT NOT NULL DEFAULT 'none', interval TEXT,
       subscription_id TEXT, period_end INTEGER, updated_at INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS billing_sub ON billing(subscription_id);
+    CREATE TABLE IF NOT EXISTS payments (
+      order_id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+      plan TEXT NOT NULL, interval TEXT NOT NULL, amount INTEGER NOT NULL, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS usage (
       org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
       month TEXT NOT NULL, messages INTEGER NOT NULL DEFAULT 0,
@@ -411,8 +413,8 @@ export async function setIntegrationStatus(orgId: string, id: string, status: In
 export interface BillingRow {
   org_id: string;
   plan: "free" | "team" | "enterprise";
-  /** none: never subscribed. pending: checkout opened. active. cancelling: ends at period_end. ended. */
-  status: "none" | "pending" | "active" | "cancelling" | "ended";
+  /** none: never paid. active: paid up until period_end. ended: the paid period ran out. */
+  status: "none" | "active" | "ended";
   interval: "monthly" | "yearly" | null;
   subscription_id: string | null;
   period_end: number | null;
@@ -424,8 +426,10 @@ export async function getBillingRow(orgId: string): Promise<BillingRow> {
   return r ?? { org_id: orgId, plan: "free", status: "none", interval: null, subscription_id: null, period_end: null, updated_at: 0 };
 }
 
-export async function findBillingBySubscription(subscriptionId: string) {
-  return await one<BillingRow>("SELECT * FROM billing WHERE subscription_id = ?", subscriptionId);
+/** Record a paid order once. False if this order was already counted (replays and duplicate webhooks). */
+export async function recordPayment(p: { orderId: string; orgId: string; plan: string; interval: string; amount: number }) {
+  const r = await run("INSERT OR IGNORE INTO payments VALUES (?,?,?,?,?,?)", p.orderId, p.orgId, p.plan, p.interval, p.amount, now());
+  return r.changes > 0;
 }
 
 export async function saveBilling(orgId: string, patch: Partial<Omit<BillingRow, "org_id" | "updated_at">>) {

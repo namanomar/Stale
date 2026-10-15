@@ -72,7 +72,7 @@ export function PricingTable() {
           );
         })}
       </div>
-      <p className="muted small">Prices in Indian rupees, billed through Razorpay (UPI, cards, netbanking). Yearly is billed once a year.</p>
+      <p className="muted small">Prices in Indian rupees, paid through Razorpay (UPI, cards, netbanking). One payment buys a month or a year; there is no automatic renewal.</p>
     </div>
   );
 }

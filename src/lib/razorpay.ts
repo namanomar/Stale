@@ -3,8 +3,9 @@ import { StaleError } from "./errors";
 import { PLANS, type Interval, type PlanId } from "./plans";
 
 /**
- * Razorpay Subscriptions over plain REST (no SDK). Billing is switched on only when both keys are set,
- * so self-hosted installs without Razorpay stay unlimited.
+ * Razorpay one-time payments (Orders + Checkout) over plain REST, no SDK. A customer pays for a month or a
+ * year of a plan; when that runs out the workspace drops back to Free until they pay again.
+ * Billing is on only when both keys are set, so self-hosted installs without Razorpay stay unlimited.
  */
 const API = "https://api.razorpay.com/v1";
 
@@ -23,43 +24,32 @@ async function call(method: string, path: string, body?: unknown): Promise<any> 
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const json: any = await res.json().catch(() => ({}));
-  if (!res.ok) throw new StaleError(502, `Razorpay: ${json?.error?.description ?? res.statusText}`);
+  if (!res.ok) {
+    const why = typeof json?.error === "string" ? json.error : json?.error?.description ?? res.statusText;
+    throw new StaleError(502, `Razorpay: ${why}`);
+  }
   return json;
 }
 
-/** The Razorpay plan id for a plan and interval, taken from env (created by `npm run razorpay:setup`). */
-export function razorpayPlanId(plan: PlanId, interval: Interval): string | undefined {
-  const key = `RAZORPAY_PLAN_${plan.toUpperCase()}_${interval.toUpperCase()}`;
-  return process.env[key] || undefined;
-}
-
-export async function createPlan(plan: PlanId, interval: Interval) {
+/** What one payment buys, in paise, for a plan and interval. */
+export function priceInPaise(plan: PlanId, interval: Interval): number {
   const def = PLANS[plan];
   const rupees = interval === "yearly" ? def.priceYearly : def.priceMonthly;
-  if (!rupees) throw new Error(`${plan} has no ${interval} price`);
-  return call("POST", "/plans", {
-    period: interval === "yearly" ? "yearly" : "monthly",
-    interval: 1,
-    item: { name: `Stale ${def.name} (${interval})`, amount: rupees * 100, currency: "INR", description: def.blurb },
+  if (!rupees) throw new StaleError(400, `${def.name} cannot be bought online`);
+  return rupees * 100;
+}
+
+export async function createOrder(opts: { plan: PlanId; interval: Interval; orgId: string }) {
+  return call("POST", "/orders", {
+    amount: priceInPaise(opts.plan, opts.interval),
+    currency: "INR",
+    receipt: `${opts.orgId}-${Date.now()}`.slice(0, 40),
+    notes: { org_id: opts.orgId, plan: opts.plan, interval: opts.interval },
   });
 }
 
-export async function createSubscription(opts: { planId: string; interval: Interval; orgId: string; email?: string }) {
-  return call("POST", "/subscriptions", {
-    plan_id: opts.planId,
-    // Razorpay needs a bounded count: 10 years either way.
-    total_count: opts.interval === "yearly" ? 10 : 120,
-    customer_notify: 1,
-    notes: { org_id: opts.orgId, ...(opts.email ? { email: opts.email } : {}) },
-  });
-}
-
-export async function getSubscription(subscriptionId: string) {
-  return call("GET", `/subscriptions/${encodeURIComponent(subscriptionId)}`);
-}
-
-export async function cancelSubscription(subscriptionId: string, atCycleEnd = true) {
-  return call("POST", `/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`, { cancel_at_cycle_end: atCycleEnd ? 1 : 0 });
+export async function getOrder(orderId: string) {
+  return call("GET", `/orders/${encodeURIComponent(orderId)}`);
 }
 
 const safeEqualHex = (a: string, b: string) => {
@@ -68,11 +58,11 @@ const safeEqualHex = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
-/** Checkout success signature: HMAC-SHA256(key_secret, payment_id|subscription_id). */
-export function verifyCheckout(paymentId: string, subscriptionId: string, signature: string) {
+/** Checkout success signature: HMAC-SHA256(key_secret, order_id|payment_id). */
+export function verifyCheckout(orderId: string, paymentId: string, signature: string) {
   const secret = keySecret();
   if (!secret) return false;
-  const want = createHmac("sha256", secret).update(`${paymentId}|${subscriptionId}`).digest("hex");
+  const want = createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
   return safeEqualHex(want, signature);
 }
 
