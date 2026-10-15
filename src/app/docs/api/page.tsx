@@ -80,6 +80,17 @@ const GROUPS: { id: string; title: string; blurb: string; rows: Ep[] }[] = [
     ],
   },
   {
+    id: "billing",
+    title: "Plans and billing",
+    blurb: "Razorpay subscriptions. Only active when the server has Razorpay keys.",
+    rows: [
+      { verb: "GET", path: "/api/billing", role: "viewer", what: "Current plan, status, limits and this month’s usage." },
+      { verb: "POST", path: "/api/billing/checkout", role: "admin", what: "Start an upgrade: { plan: \"team\", interval }. Returns what Razorpay Checkout needs." },
+      { verb: "POST", path: "/api/billing/verify", role: "admin", what: "Confirm a finished payment by its Razorpay signature, then switch the plan on." },
+      { verb: "POST", path: "/api/billing/cancel", role: "admin", what: "Stop renewing. The plan stays on until the paid period ends." },
+    ],
+  },
+  {
     id: "system",
     title: "System",
     blurb: "Health and demo helpers.",
@@ -113,7 +124,7 @@ export default function Api() {
         <tr><td><span className="dx-pill warn">member</span></td><td>Everything a viewer can do, plus writes: remember, ingest, resolve, approve, integrations.</td></tr>
         <tr><td><span className="dx-pill bad">admin</span></td><td>Everything, plus members, API keys and workspace settings.</td></tr>
       </tbody></table></div>
-      <Note kind="tip">A request below your role gets <code>403</code>. A missing or wrong key gets <code>401</code>.</Note>
+      <Note kind="tip">A request below your role gets <code>403</code>. Going over a plan limit returns <code>402</code>. A missing or wrong key gets <code>401</code>.</Note>
 
       <h2 id="conventions">Conventions</h2>
       <ul className="plain">
@@ -168,6 +179,7 @@ curl $HOST/api/v1/repair-plan -H "Authorization: Bearer $KEY"`}</div>
       <div className="dx-table-wrap"><table className="dx-table"><tbody>
         <tr><td><span className="verb post">POST</span> <code>/api/hooks/slack/:id</code></td><td>Slack Events API. Requests must carry a valid Slack signature.</td></tr>
         <tr><td><span className="verb post">POST</span> <code>/api/hooks/email/:id</code></td><td>Forwarded or parsed email. Header <code>x-stale-secret</code>.</td></tr>
+        <tr><td><span className="verb post">POST</span> <code>/api/hooks/razorpay</code></td><td>Razorpay subscription events (renewals, failures, cancellations). Signed with your webhook secret.</td></tr>
         <tr><td><span className="verb post">POST</span> <code>/api/hooks/generic/:id</code></td><td>Any JSON: <code>{`{ source, author, text }`}</code>. Header <code>x-stale-secret</code>.</td></tr>
       </tbody></table></div>
     </>

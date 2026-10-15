@@ -1,3 +1,4 @@
+import { assertCanAddConnector } from "@/lib/billing";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { PULL, normalizeJiraSite } from "@/lib/connectors";
@@ -50,6 +51,7 @@ export const POST = route(
     const b = await body(input);
     const origin = new URL(req.url).origin;
     const org = principal.org.id;
+    await assertCanAddConnector(org);
 
     if (b.type === "slack") {
       let teamId: string | undefined;

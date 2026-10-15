@@ -79,6 +79,7 @@ Open <http://localhost:3000/signup>, create a workspace, and load the sample sto
 | `npm test` | Test suite against a live FalkorDB (engine, HTTP, MCP) |
 | `npm run smoke` | Narrated end-to-end walkthrough |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm run razorpay:setup` | Create the Team plans in your Razorpay account |
 
 ## Give your agent a memory
 
@@ -124,6 +125,8 @@ Copy `.env.example` to `.env`.
 | `STALE_SECRET` | in production | Encrypts integration tokens at rest (AES-256-GCM). Long, random, stable. |
 | `OPENAI_API_KEY` | recommended | Claim extraction. Without it a simpler rules engine runs. |
 | `OPENAI_MODEL`, `OPENAI_TRANSCRIBE_MODEL` | no | Defaults `gpt-4o` and `whisper-1`. |
+| `RAZORPAY_API_KEY`, `RAZORPAY_SECRET` | for paid plans | Turns on plans and limits (Free / Team). Unset means unlimited. Run `npm run razorpay:setup` once to create the Team plans. |
+| `RAZORPAY_WEBHOOK_SECRET` | for paid plans | Verifies renewal events sent to `/api/hooks/razorpay`. |
 | `STALE_AUTH=off` | never in prod | Dev and tests only: trusts an `x-tenant-id` header instead of login. |
 
 ## Deploy

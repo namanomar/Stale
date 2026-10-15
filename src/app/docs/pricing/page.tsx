@@ -12,7 +12,7 @@ export default function Pricing() {
         lead="Priced by the work Stale does for you, not by how many people look at it. Free to start, and you only pay when your team depends on it."
       />
 
-      <Note kind="warn" title="Proposed pricing">These plans are a proposal for how Stale could be priced. Billing isn’t switched on yet, so nothing here is charged today.</Note>
+      <Note kind="tip" title="Test mode">Payments run through Razorpay. While the keys are test keys, no real money moves: use Razorpay’s test cards and UPI ids.</Note>
 
       <PricingTable />
 
@@ -26,7 +26,7 @@ export default function Pricing() {
 
       <h2 id="faq">Questions people ask</h2>
       <h3>What happens when we hit the limit?</h3>
-      <p>New items are queued, not dropped, and nothing already in memory changes. The firewall keeps working, because it only reads the graph. You can upgrade, or wait for the next month.</p>
+      <p>New messages are refused with a clear “upgrade” error (HTTP 402) until you upgrade or the month rolls over. Nothing already in memory changes, and the firewall keeps working, because it only reads the graph.</p>
       <h3>Can we bring our own OpenAI key?</h3>
       <p>Yes. If you self-host, you supply your own key and there’s no message cap at all. The hosted plans include extraction.</p>
       <h3>Can we self-host for free?</h3>

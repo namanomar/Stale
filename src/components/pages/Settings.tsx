@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { jf, type Me } from "../api";
-import { CopyBlock, errText, Field, Modal, PageHead, timeAgo, useLoad, useToast } from "../ui";
+import { inr, PLANS, perMonth, type Interval } from "@/lib/plans";
+import { CopyBlock, errText, Field, Modal, PageHead, timeAgo, Spinner, useLoad, useToast } from "../ui";
 
-type Tab = "general" | "members" | "keys" | "agent";
+type Tab = "general" | "billing" | "members" | "keys" | "agent";
 
 function General({ me, reload }: { me: Me; reload: () => void }) {
   const toast = useToast();
@@ -50,6 +51,155 @@ function General({ me, reload }: { me: Me; reload: () => void }) {
       </Field>
       <button className="btn primary" disabled={!admin} onClick={save}>Save changes</button>
       {!admin && <div className="muted small" style={{ marginTop: 8 }}>Only admins can change these settings.</div>}
+    </div>
+  );
+}
+
+
+interface BillingInfo {
+  enabled: boolean;
+  plan: "free" | "team" | "enterprise";
+  planName: string;
+  status: "none" | "pending" | "active" | "cancelling" | "ended";
+  interval: "monthly" | "yearly" | null;
+  periodEnd: number | null;
+  limits: { messages: number | null; members: number | null; connectors: number | null };
+  usage: { messages: number; members: number; connectors: number };
+}
+
+declare global {
+  interface Window {
+    Razorpay?: new (opts: Record<string, unknown>) => { open: () => void; on: (e: string, cb: (r: any) => void) => void };
+  }
+}
+
+function loadCheckout(): Promise<void> {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = "https://checkout.razorpay.com/v1/checkout.js";
+    el.onload = () => resolve();
+    el.onerror = () => reject(new Error("Could not load Razorpay Checkout"));
+    document.body.appendChild(el);
+  });
+}
+
+function Meter({ label, used, limit }: { label: string; used: number; limit: number | null }) {
+  const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <b>{label}</b>
+        <span className="muted small">{used.toLocaleString("en-IN")} of {limit === null ? "unlimited" : limit.toLocaleString("en-IN")}</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 4, background: "var(--chip)", marginTop: 5, overflow: "hidden" }}>
+        <div style={{ width: `${limit === null ? 0 : pct}%`, height: "100%", background: pct >= 90 ? "var(--tainted)" : "var(--accent)" }} />
+      </div>
+    </div>
+  );
+}
+
+function Billing({ me }: { me: Me }) {
+  const toast = useToast();
+  const admin = me.role === "admin";
+  const { data: b, reload } = useLoad<BillingInfo>(() => jf("GET", "/api/billing"));
+  const [interval, setInterval] = useState<Interval>("yearly");
+  const [busy, setBusy] = useState(false);
+
+  async function upgrade() {
+    setBusy(true);
+    try {
+      const { subscriptionId, keyId } = await jf<{ subscriptionId: string; keyId: string }>("POST", "/api/billing/checkout", { plan: "team", interval });
+      await loadCheckout();
+      const rz = new window.Razorpay!({
+        key: keyId,
+        subscription_id: subscriptionId,
+        name: "Stale",
+        description: `Team plan (${interval})`,
+        prefill: { name: me.user?.name, email: me.user?.email },
+        theme: { color: "#25603b" },
+        handler: async (r: Record<string, string>) => {
+          try {
+            await jf("POST", "/api/billing/verify", r);
+            toast("ok", "You're on the Team plan");
+          } catch (e) {
+            toast("err", errText(e));
+          }
+          reload();
+        },
+        modal: { ondismiss: () => setBusy(false) },
+      });
+      rz.on("payment.failed", (r: any) => toast("err", r?.error?.description ?? "Payment failed"));
+      rz.open();
+    } catch (e) {
+      toast("err", errText(e));
+      setBusy(false);
+    }
+  }
+
+  async function cancel() {
+    if (!confirm("Cancel renewal? Team stays on until the end of the period you've paid for.")) return;
+    try {
+      await jf("POST", "/api/billing/cancel", {});
+      toast("ok", "Renewal cancelled");
+      reload();
+    } catch (e) {
+      toast("err", errText(e));
+    }
+  }
+
+  if (!b) return <div className="box" style={{ maxWidth: 640 }}><Spinner /></div>;
+  if (!b.enabled) {
+    return (
+      <div className="box" style={{ maxWidth: 640 }}>
+        <b>Billing is off on this server.</b>
+        <p className="muted small">No plan limits apply. Set the <code>RAZORPAY_*</code> variables to turn plans on.</p>
+      </div>
+    );
+  }
+  const team = PLANS.team;
+  const ends = b.periodEnd ? new Date(b.periodEnd).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : null;
+  return (
+    <div style={{ maxWidth: 640, display: "grid", gap: 16 }}>
+      <div className="box">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <div>
+            <div className="muted small">Current plan</div>
+            <h3 style={{ margin: 0, fontSize: 24 }}>{b.planName}</h3>
+          </div>
+          {b.status === "active" && <span className="chip">Renews {ends}</span>}
+          {b.status === "cancelling" && <span className="chip">Ends {ends}</span>}
+        </div>
+        <div style={{ marginTop: 18 }}>
+          <Meter label="Messages read this month" used={b.usage.messages} limit={b.limits.messages} />
+          <Meter label="People" used={b.usage.members} limit={b.limits.members} />
+          <Meter label="Connectors" used={b.usage.connectors} limit={b.limits.connectors} />
+        </div>
+        {b.status === "active" && admin && <button className="btn danger sm" onClick={cancel}>Cancel renewal</button>}
+      </div>
+
+      {b.plan === "free" && (
+        <div className="box">
+          <h3 style={{ margin: "0 0 4px" }}>Upgrade to Team</h3>
+          <p className="muted small" style={{ marginTop: 0 }}>{team.blurb}</p>
+          <div className="row" style={{ margin: "10px 0" }}>
+            {(["monthly", "yearly"] as Interval[]).map((i) => (
+              <button key={i} className={`btn sm${interval === i ? " primary" : ""}`} onClick={() => setInterval(i)}>
+                {i === "monthly" ? "Monthly" : "Yearly · 2 months free"}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 34, fontWeight: 800, fontFamily: "var(--font-display)" }}>
+            {inr(perMonth(team, interval)!)} <span className="muted small" style={{ fontWeight: 500 }}>/ month{interval === "yearly" ? `, billed ${inr(team.priceYearly!)} a year` : ""}</span>
+          </div>
+          <ul className="muted small" style={{ paddingLeft: 18 }}>
+            <li>{team.messages!.toLocaleString("en-IN")} messages read per month</li>
+            <li>Up to {team.members} people, unlimited connectors</li>
+          </ul>
+          <button className="btn primary" disabled={!admin || busy} onClick={upgrade}>{busy ? "Opening checkout…" : "Upgrade with Razorpay"}</button>
+          {!admin && <div className="muted small" style={{ marginTop: 8 }}>Only admins can change the plan.</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -211,11 +361,12 @@ export default function Settings() {
     <div className="page">
       <PageHead title="Settings" sub={me ? `${me.org.name} · you are ${me.role === "admin" ? "an admin" : `a ${me.role}`}` : undefined} />
       <div className="tabsbar">
-        {([["general", "General"], ["members", "Members"], ["keys", "API keys"], ["agent", "Connect an agent"]] as [Tab, string][]).map(([k, l]) => (
+        {([["general", "General"], ["billing", "Plan & billing"], ["members", "Members"], ["keys", "API keys"], ["agent", "Connect an agent"]] as [Tab, string][]).map(([k, l]) => (
           <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
       {me && tab === "general" && <General me={me} reload={reload} />}
+      {me && tab === "billing" && <Billing me={me} />}
       {me && tab === "members" && <Members me={me} />}
       {me && tab === "keys" && <Keys me={me} />}
       {tab === "agent" && <Agent />}

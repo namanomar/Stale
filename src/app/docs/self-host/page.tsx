@@ -18,7 +18,15 @@ STALE_SECRET=
 
 # Claim extraction (optional: without it a simpler rules engine is used)
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o`;
+OPENAI_MODEL=gpt-4o
+
+# Billing (optional). Without these there are no plan limits.
+RAZORPAY_API_KEY=rzp_test_...
+RAZORPAY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=
+# created for you by: npm run razorpay:setup
+RAZORPAY_PLAN_TEAM_MONTHLY=
+RAZORPAY_PLAN_TEAM_YEARLY=`;
 
 export default function SelfHost() {
   return (
@@ -46,6 +54,8 @@ export default function SelfHost() {
           <tr><td><code>TURSO_DATABASE_URL</code>, <code>TURSO_AUTH_TOKEN</code></td><td>On Vercel</td><td>Where accounts live. Unset means a local file, which serverless hosts can’t keep.</td></tr>
           <tr><td><code>STALE_SECRET</code></td><td>In production</td><td>Encryption key for stored integration tokens.</td></tr>
           <tr><td><code>OPENAI_API_KEY</code></td><td>Recommended</td><td>Better claim extraction. Without it a rules engine runs.</td></tr>
+          <tr><td><code>RAZORPAY_API_KEY</code>, <code>RAZORPAY_SECRET</code></td><td>For paid plans</td><td>Turns plans and limits on. Also accepted as <code>RAZORPAY_KEY_ID</code> / <code>RAZORPAY_KEY_SECRET</code>. Unset means unlimited.</td></tr>
+          <tr><td><code>RAZORPAY_WEBHOOK_SECRET</code></td><td>For paid plans</td><td>Verifies renewal and cancellation events sent to <code>/api/hooks/razorpay</code>.</td></tr>
           <tr><td><code>STALE_DB</code></td><td>No</td><td>Path of the local SQLite file (default <code>data/stale.db</code>).</td></tr>
           <tr><td><code>STALE_AUTH=off</code></td><td>Never in production</td><td>Dev and tests only. Trusts a tenant header instead of login.</td></tr>
         </tbody>

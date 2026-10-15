@@ -2,104 +2,77 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { inr, PLANS, perMonth, type Interval, type PlanId } from "@/lib/plans";
 
-interface Plan {
-  name: string;
-  blurb: string;
-  monthly: number | null;
-  cta: string;
-  href: string;
-  hot?: boolean;
-  items: { t: string; no?: boolean }[];
-}
+const FEATURES: Record<PlanId, { t: string; no?: boolean }[]> = {
+  free: [
+    { t: "1 workspace" },
+    { t: "Up to 3 people" },
+    { t: "500 messages read per month" },
+    { t: "2 connectors" },
+    { t: "Taint firewall + review queue" },
+    { t: "MCP and REST API" },
+    { t: "SSO", no: true },
+  ],
+  team: [
+    { t: "1 workspace" },
+    { t: "Up to 15 people" },
+    { t: "10,000 messages read per month" },
+    { t: "Unlimited connectors" },
+    { t: "Everything in Free" },
+    { t: "Email support" },
+    { t: "SSO", no: true },
+  ],
+  enterprise: [
+    { t: "Unlimited people and messages" },
+    { t: "Self-hosted or private cloud" },
+    { t: "SSO, SCIM and audit exports" },
+    { t: "Uptime SLA and a named contact" },
+    { t: "Security review and DPA" },
+  ],
+};
 
-const PLANS: Plan[] = [
-  {
-    name: "Free",
-    blurb: "Try it on a real team, no card.",
-    monthly: 0,
-    cta: "Start free",
-    href: "/signup",
-    items: [
-      { t: "1 workspace, up to 3 people" },
-      { t: "500 messages read per month" },
-      { t: "2 connectors" },
-      { t: "Taint firewall + review queue" },
-      { t: "MCP and REST API" },
-      { t: "30 days of audit history" },
-      { t: "SSO", no: true },
-    ],
-  },
-  {
-    name: "Team",
-    blurb: "For a team whose decisions depend on shared facts.",
-    monthly: 49,
-    cta: "Start Team",
-    href: "/signup",
-    hot: true,
-    items: [
-      { t: "1 workspace, up to 15 people" },
-      { t: "10,000 messages read per month" },
-      { t: "All connectors, unlimited" },
-      { t: "Everything in Free" },
-      { t: "1 year of audit history" },
-      { t: "Email support" },
-      { t: "SSO", no: true },
-    ],
-  },
-  {
-    name: "Enterprise",
-    blurb: "Your cloud, your rules, our help.",
-    monthly: null,
-    cta: "Talk to us",
-    href: "mailto:hello@example.com?subject=Stale%20Enterprise",
-    items: [
-      { t: "Unlimited workspaces and people" },
-      { t: "Custom volume" },
-      { t: "Self-hosted or private cloud" },
-      { t: "SSO, SCIM and audit exports" },
-      { t: "Uptime SLA and a named contact" },
-      { t: "Security review and DPA" },
-    ],
-  },
-];
+const ORDER: PlanId[] = ["free", "team", "enterprise"];
 
 export function PricingTable() {
-  const [yearly, setYearly] = useState(true);
+  const [interval, setInterval] = useState<Interval>("yearly");
   return (
     <div>
       <div className="price-bar">
         <div className="price-switch" role="group" aria-label="Billing period">
-          <button className={!yearly ? "on" : ""} onClick={() => setYearly(false)}>Monthly</button>
-          <button className={yearly ? "on" : ""} onClick={() => setYearly(true)}>Yearly</button>
+          <button className={interval === "monthly" ? "on" : ""} onClick={() => setInterval("monthly")}>Monthly</button>
+          <button className={interval === "yearly" ? "on" : ""} onClick={() => setInterval("yearly")}>Yearly</button>
         </div>
         <span className="price-save">2 months free</span>
       </div>
       <div className="price-grid">
-        {PLANS.map((p) => {
-          const per = p.monthly === null ? null : yearly ? Math.round((p.monthly * 10) / 12) : p.monthly;
+        {ORDER.map((id) => {
+          const p = PLANS[id];
+          const per = perMonth(p, interval);
+          const hot = id === "team";
           return (
-            <div key={p.name} className={`plan${p.hot ? " hot" : ""}`}>
+            <div key={id} className={`plan${hot ? " hot" : ""}`}>
               <h3>{p.name}</h3>
               <div className="for">{p.blurb}</div>
               <div className="amt">
-                {per === null ? "Custom" : `$${per}`}
+                {per === null ? "Custom" : inr(per)}
                 {per !== null && per > 0 && <small> / month</small>}
               </div>
               <ul>
-                {p.items.map((i) => (
+                {FEATURES[id].map((i) => (
                   <li key={i.t} className={i.no ? "no" : ""}>{i.t}</li>
                 ))}
               </ul>
-              {p.href.startsWith("/") ? (
-                <Link href={p.href} className={`btn${p.hot ? " primary" : ""}`}>{p.cta}</Link>
+              {id === "enterprise" ? (
+                <a href="mailto:hello@example.com?subject=Stale%20Enterprise" className="btn">Talk to us</a>
               ) : (
-                <a href={p.href} className="btn">{p.cta}</a>
+                <Link href="/signup" className={`btn${hot ? " primary" : ""}`}>{id === "free" ? "Start free" : "Start Team"}</Link>
               )}
             </div>
           );
         })}
       </div>
+      <p className="muted small">Prices in Indian rupees, billed through Razorpay (UPI, cards, netbanking). Yearly is billed once a year.</p>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { candidatesFor, extractClaims, numbers, reconcile, type Claim } from "./extract";
+import { assertCanRead } from "./billing";
 import { conflict } from "./errors";
 import type { Memory } from "./memory";
-import { createReview, decideReview, ingestRecord, ingestSeen, touchIntegration, type Org, type ReviewItem } from "./system";
+import { addMessages, createReview, decideReview, ingestRecord, ingestSeen, touchIntegration, type Org, type ReviewItem } from "./system";
 
 export type DocKind = "slack" | "webhook" | "email" | "upload" | "manual" | "github" | "drive" | "jira" | "notion";
 
@@ -87,7 +88,9 @@ export async function ingestDocument(org: Org, mem: Memory, doc: IngestDoc): Pro
   // A quarantined channel stays quarantined; a connector never talks a source back into trust.
   const sourceUntrusted = (await mem.getSource(sourceId)).trust === "untrusted" || !!doc.untrusted;
 
+  await assertCanRead(org.id);
   const { claims, engine } = await extractClaims(doc);
+  await addMessages(org.id);
   const result: IngestResult = { status: "processed", engine, claims: claims.length, added: [], confirmed: [], updated: [], queued: [] };
   const evidence: Evidence = {
     quote: "", author: doc.author, url: doc.url, ts: doc.ts ?? Date.now(), source: doc.sourceName, kind: doc.kind, doc: doc.externalId,
