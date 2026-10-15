@@ -2,6 +2,7 @@
 
 import { ThemeToggle } from "./theme";
 import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { jf, type Me } from "./api";
 import { ToastProvider, useLoad } from "./ui";
@@ -42,16 +43,7 @@ export default function Shell({ initial, children }: { initial: Me; children: Re
             <span className="mark">◆</span>
             <span className="t">Stale</span>
           </div>
-          <div className="ws" title="Workspace">
-            <span className="av">{me.org.name.slice(0, 1).toUpperCase()}</span>
-            <select value={me.org.id} onChange={(e) => switchOrg(e.target.value)} aria-label="Workspace">
-              {me.orgs.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <WorkspaceMenu me={me} onSwitch={switchOrg} />
           <nav className="nav">
             {NAV.map((n) => (
               <div key={n.href} style={{ display: "contents" }}>
@@ -81,5 +73,67 @@ export default function Shell({ initial, children }: { initial: Me; children: Re
         <main className={`content ${flush ? "flush" : ""}`}>{children}</main>
       </div>
     </ToastProvider>
+  );
+}
+
+/** The workspace picker: a styled menu instead of the browser's native select list. */
+function WorkspaceMenu({ me, onSwitch }: { me: Me; onSwitch: (orgId: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const many = me.orgs.length > 1;
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+
+  return (
+    <div className="ws-wrap" ref={box}>
+      <button
+        type="button"
+        className={`ws${open ? " open" : ""}`}
+        onClick={() => many && setOpen((o) => !o)}
+        aria-haspopup={many ? "listbox" : undefined}
+        aria-expanded={many ? open : undefined}
+        aria-label="Workspace"
+        disabled={!many}
+      >
+        <span className="av">{me.org.name.slice(0, 1).toUpperCase()}</span>
+        <span className="ws-name">
+          <b>{me.org.name}</b>
+          <small>{me.role}</small>
+        </span>
+        {many && <span className="chev" aria-hidden>▾</span>}
+      </button>
+      {open && (
+        <div className="ws-menu" role="listbox" aria-label="Switch workspace">
+          <div className="ws-menu-l">Switch workspace</div>
+          {me.orgs.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              role="option"
+              aria-selected={o.id === me.org.id}
+              className={o.id === me.org.id ? "on" : ""}
+              onClick={() => (o.id === me.org.id ? setOpen(false) : onSwitch(o.id))}
+            >
+              <span className="av">{o.name.slice(0, 1).toUpperCase()}</span>
+              <span className="ws-name">
+                <b>{o.name}</b>
+                <small>{o.role}</small>
+              </span>
+              {o.id === me.org.id && <span className="tick" aria-hidden>✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
